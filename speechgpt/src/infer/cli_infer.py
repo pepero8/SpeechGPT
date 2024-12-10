@@ -1,3 +1,5 @@
+import sys
+sys.path.append("/home/jhwan98/EmoSDS/SpeechGPT") # added by jaehwan
 import torch
 import torch.nn as nn
 from fairseq.models.text_to_speech.vocoder import CodeHiFiGANVocoder
@@ -22,7 +24,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-
 NAME="SpeechGPT"
 META_INSTRUCTION="You are an AI assistant whose name is SpeechGPT.\n- SpeechGPT is a intrinsic cross-modal conversational language model that is developed by Fudan University.  SpeechGPT can understand and communicate fluently with human through speech or text chosen by the user.\n- It can perceive cross-modal inputs and generate cross-modal outputs.\n"
 DEFAULT_GEN_PARAMS = {
@@ -44,7 +45,6 @@ def extract_text_between_tags(text, tag1='[SpeechGPT] :', tag2='<eoa>'):
     else:
         response = ""
     return response
-
 
 
 class SpeechGPTInference:
@@ -227,9 +227,8 @@ class SpeechGPTInference:
                 print(e)
 
             prompt = str(input(f"Please input prompts for {NAME}:\n"))
-            
 
-            
+
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name-or-path", type=str, default="")
@@ -251,9 +250,3 @@ if __name__=='__main__':
     )
 
     infer.interact()
-
-
-
-
-
-

@@ -181,14 +181,15 @@ if __name__ == '__main__':
     parser.add_argument("--wav", type=str)
     args = parser.parse_args()
 
-    ckpt_dir = "speechgpt/utils/speech2unit/"
+    # ckpt_dir = "speechgpt/utils/speech2unit/"
+    ckpt_dir = "./"
 
     s2u = Speech2Unit(
         ckpt_dir=ckpt_dir
     )
 
     units = s2u(args.wav)
-    print(units)
+    print("[", units, "]")
 
 
     

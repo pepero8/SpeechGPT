@@ -1,19 +1,19 @@
-#stage1: modality-adaptation pretraining
-import random
-import copy
+# stage1: modality-adaptation pretraining
+# import random
+# import copy
 import logging
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Sequence, List
 import torch
 from datasets import load_dataset, Dataset, concatenate_datasets
-import evaluate
+# import evaluate
 import math
-import tqdm
-import glob
+# import tqdm
+# import glob
 import transformers
 from transformers import Trainer, LlamaForCausalLM, LlamaTokenizer, HfArgumentParser, TrainingArguments, DataCollatorForSeq2Seq
 from transformers.trainer_utils import get_last_checkpoint
-from speechgpt.utils.prompter import Prompter
+# from speechgpt.utils.prompter import Prompter
 import os
 from itertools import chain
 import logging
@@ -112,7 +112,6 @@ class TrainingArguments(transformers.TrainingArguments):
     optim: str = field(default="adamw_torch")
 
 
-
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
     """Collects the state dict and dump to disk."""
     state_dict = trainer.model.state_dict()
@@ -133,14 +132,12 @@ def train():
         handlers=[logging.StreamHandler(sys.stdout)],
     )
 
-    
     # Log on each process the small summary:
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
         + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
-
 
     # Detecting last checkpoint.
     last_checkpoint = None
@@ -157,7 +154,6 @@ def train():
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
 
-
     model = LlamaForCausalLM.from_pretrained(
         model_args.model_name_or_path,
     ).to(torch.device(training_args.device))
@@ -169,14 +165,14 @@ def train():
         0  # unk. we want this to be different from the eos token
     )
     tokenizer.padding_side = "left"  # Allow batched inference
-    #Extend vocab for speech units
+    # Extend vocab for speech units
     if '<sosp>' not in tokenizer.get_vocab():
         units_size=1000
         logger.info(f"Add special unit tokens <0>-<{units_size-1} to tokenizer.vocab")
         new_tokens = [f"<{x}>" for x in range(units_size)] + ['<sosp>', '<eosp>']
         tokenizer.add_tokens(new_tokens)
 
-    #resize embedding
+    # resize embedding
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
@@ -187,8 +183,7 @@ def train():
             if "embed" not in name:
                 param.requires_grad = False
 
-
-    #data
+    # data
     data_files = {}
     dataset_args = {}
     if data_args.train_file is not None:
@@ -222,7 +217,6 @@ def train():
             **dataset_args,
         )
 
-    
     if training_args.do_train:
         column_names = list(raw_datasets["train"].features)
     else:
@@ -232,7 +226,6 @@ def train():
     def tokenize_function(examples):
         output = tokenizer(examples[text_column_name])
         return output
-
 
     tokenized_cache_file_names = {
         "train":os.path.join(model_args.cache_dir, 'tokenized', 'train', 'processed_train.arrow'),
@@ -282,6 +275,7 @@ def train():
         # customize this part to your needs.
         if total_length >= block_size:
             total_length = (total_length // block_size) * block_size
+        print("yeeeeeeeeeeeeaaaaaaaaaaaaaaaaaaaa", total_length)  # added by jaehwan
         # Split by chunks of max_len.
         result = {
             k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
@@ -289,7 +283,6 @@ def train():
         }
         result["labels"] = result["input_ids"].copy()
         return result
-
 
     group_cache_file_names = {
         "train":os.path.join(model_args.cache_dir, 'group', 'train', 'processed_train.arrow'),
@@ -299,13 +292,13 @@ def train():
     with training_args.main_process_first(desc="grouping texts together"):
         if not data_args.streaming:
             lm_datasets = tokenized_datasets.map(
-                group_texts,
-                batched=True,
-                num_proc=data_args.preprocessing_num_workers,
-                load_from_cache_file=not data_args.overwrite_cache,
-                desc=f"Grouping texts in chunks of {block_size}",
-                cache_file_names=group_cache_file_names
-            )
+                    group_texts,
+                    batched=True,
+                    num_proc=data_args.preprocessing_num_workers,
+                    load_from_cache_file=not data_args.overwrite_cache,
+                    desc=f"Grouping texts in chunks of {block_size}",
+                    cache_file_names=group_cache_file_names,
+                )
         else:
             lm_datasets = tokenized_datasets.map(
                 group_texts,
@@ -316,10 +309,14 @@ def train():
         if "train" not in tokenized_datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = lm_datasets["train"]
+        print(
+            "fuuuuuuuuuuuccccccckkkkkkk yeahhhhhhhhhhhhhhhhhhh",
+            data_args.max_train_samples,
+            len(train_dataset),
+        )  # added by jaehwan
         if data_args.max_train_samples is not None:
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))            
-
 
     if training_args.do_eval:
         if "validation" not in tokenized_datasets:
@@ -328,7 +325,6 @@ def train():
         if data_args.max_eval_samples is not None:
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
             eval_dataset = eval_dataset.select(range(max_eval_samples))
-
 
     data_collator = DataCollatorForSeq2Seq(
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
@@ -342,7 +338,6 @@ def train():
         eval_dataset=eval_dataset if training_args.do_eval else None, 
         data_collator=data_collator
         )
-    
 
     # Training
     if training_args.do_train:
@@ -365,8 +360,6 @@ def train():
         trainer.save_state()
         safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
 
-        
-
     # Evaluation
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
@@ -383,7 +376,6 @@ def train():
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
-
 
 
 if __name__ == "__main__":

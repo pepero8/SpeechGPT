@@ -1,0 +1,8 @@
+speechgpt/data/
+speechgpt/output/
+speechgpt/prompt/
+output/
+*.pt
+*.pyc
+*.bin
+*.wav
