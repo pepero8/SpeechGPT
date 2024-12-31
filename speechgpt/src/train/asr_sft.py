@@ -1,4 +1,4 @@
-# stage2: cross-modal instruct finetuning
+# stage3: dialogue finetuning
 import math
 import sys
 sys.path.append("/home/jhwan98/EmoSDS/SpeechGPT/speechgpt")
@@ -18,6 +18,10 @@ from transformers.trainer_utils import get_last_checkpoint
 from utils.prompter import Prompter
 import os
 import logging
+# from datasets import load_metric
+import evaluate
+from typing import Dict, List, Tuple
+import numpy as np
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -31,6 +35,12 @@ class ModelArguments:
                 "The model checkpoint for weights initialization.Don't set if you want to train a model from scratch."
             )
         },
+    )
+
+    # tune embedding
+    train_embeddings: bool = field(
+        default=False,
+        metadata={"help": ("only train embeddings while training")},
     )
 
 
@@ -101,47 +111,6 @@ class TrainingArguments(transformers.TrainingArguments):
         default=0,
         metadata={"help": "initial_global_step"}
     )
-    # bf16: bool = field(
-    #     default=False,
-    #     metadata={"help": "Whether to use bf16 16-bit (mixed) precision training"},
-    # )
-    # per_device_train_batch_size: int = field(
-    #     default=4, metadata={"help": "Batch size per GPU/TPU core/CPU for training"}
-    # )
-    # per_device_eval_batch_size: int = field(
-    #     default=4, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation"}
-    # )
-    # gradient_accumulation_steps: int = field(
-    #     default=6,
-    #     metadata={"help": "Number of updates steps to accumulate before backward pass"},
-    # )
-    # evaluation_strategy: str = field(
-    #     default="no", metadata={"help": "The evaluation strategy to use"}
-    # )
-    # save_strategy: str = field(
-    #     default="steps", metadata={"help": "The checkpoint save strategy to use"}
-    # )
-    # save_steps: int = field(
-    #     default=4, metadata={"help": "Save checkpoint every X updates steps"}
-    # )
-    # weight_decay: float = field(
-    #     default=0.0, metadata={"help": "Weight decay for AdamW optimizer"}
-    # )
-    # warmup_ratio: float = field(default=0.03, metadata={"help": "Linear warmup ratio"})
-    # lr_scheduler_type: str = field(
-    #     default="cosine", metadata={"help": "The scheduler type to use"}
-    # )
-    # logging_steps: int = field(
-    #     default=1, metadata={"help": "Log every X updates steps"}
-    # )
-    # fsdp: str = field(
-    #     default="full_shard auto_wrap",
-    #     metadata={"help": "Fully Sharded Data Parallel training configuration"},
-    # )
-    # fsdp_transformer_layer_cls_to_wrap: str = field(
-    #     default="LlamaDecoderLayer",
-    #     metadata={"help": "Transformer layer class name for FSDP wrapping"},
-    # )
 
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
     """Collects the state dict and dump to disk."""
@@ -220,11 +189,9 @@ def train():
     if '<sosp>' not in tokenizer.get_vocab():
         units_size=1000
         logger.info(f"Add special unit tokens <0>-<{units_size-1} to tokenizer.vocab")
-        # new_tokens = [f"<{x}>" for x in range(units_size)] + ['<sosp>','<eosp>','[Human]','[SpeechGPT]','<eoh>','<eos>']
-        new_tokens = [f"<{x}>" for x in range(units_size)] + ['<sosp>','<eosp>','[Human]','[EmoSDS]','<eoh>','<eos>']
+        new_tokens = [f"<{x}>" for x in range(units_size)] + ['<sosp>','<eosp>']
         tokenizer.add_tokens(new_tokens)
-    # for token in ['<sosp>','<eosp>','[Human]','[SpeechGPT]','<eoh>','<eos>']:
-    for token in ['<sosp>','<eosp>','[Human]','[EmoSDS]','<eoh>','<eos>']:
+    for token in ['<sosp>','<eosp>']:
         if token not in tokenizer.get_vocab():
             logger.info(f"Add special unit tokens {token} to tokenizer.vocab")
             tokenizer.add_tokens([token])
@@ -233,6 +200,12 @@ def train():
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
+
+    if model_args.train_embeddings:
+        logger.info("only update embedding parameters")
+        for name, param in model.named_parameters():
+            if "embed" not in name:
+                param.requires_grad = False
 
     def tokenize(prompt, add_eos_token=True):
         # there's probably a way to do this with the tokenizer settings
@@ -265,6 +238,7 @@ def train():
             data_point["plain_text"],
         )
         tokenized_full_prompt = tokenize(full_prompt)
+        # tokenized_label = tokenize(data_point["plain_text"])
 
         user_prompt = prompter.generate_prompt(
             data_point["prefix"]
@@ -284,10 +258,10 @@ def train():
     else:
         data = load_dataset(data_args.data_path)
 
-    tokenized_cache_file_names = {
-        "train":os.path.join(training_args.cache_dir, 'tokenized', 'train', 'processed_train.arrow'),
-        "test":os.path.join(training_args.cache_dir, 'tokenized', 'valid', 'processed_valid.arrow'),
-        }
+    # tokenized_cache_file_names = {
+    #     "train":os.path.join(training_args.cache_dir, 'tokenized', 'train', 'processed_train.arrow'),
+    #     "test":os.path.join(training_args.cache_dir, 'tokenized', 'valid', 'processed_valid.arrow'),
+    #     }
 
     if training_args.val_set_size > 0:
         train_val = data["train"].train_test_split(
@@ -321,14 +295,113 @@ def train():
             tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True
         )
 
-    trainer = Trainer(
-        model=model, 
-        tokenizer=tokenizer, 
-        args=training_args, 
-        train_dataset=train_data if training_args.do_train else None, 
-        eval_dataset=val_data if training_args.do_eval else None, 
-        data_collator=data_collator
+    def postprocess_text(
+        preds: List[str], labels: List[str]
+    ) -> Tuple[List[str], List[str]]:
+        """Post-process text by removing special tokens and extra whitespace."""
+        # preds = [pred.strip() for pred in preds]
+        # labels = [label.strip() for label in labels]
+
+        # Remove '!' and strip whitespace
+        preds = [pred.replace("!", "").strip() for pred in preds]
+        labels = [label.replace("!", "").strip() for label in labels]
+
+        # Remove multiple spaces
+        preds = [" ".join(pred.split()) for pred in preds]
+        labels = [" ".join(label.split()) for label in labels]
+
+        return preds, labels
+
+    def compute_metrics(eval_preds) -> Dict:
+        """
+        Compute BLEU, BERT score, WER along with other metrics.
+        Args:
+            eval_preds: tuple containing predictions and labels from Trainer
+        Returns:
+            dict containing metrics
+        """
+        bleu_metric = evaluate.load("sacrebleu")
+        bertscore = evaluate.load("bertscore")
+        wer_metric = evaluate.load("wer")
+
+        preds, labels = eval_preds
+        preds = np.array(preds)
+        if isinstance(preds, tuple):
+            preds = preds[0]
+
+        # Decode generated tokens to text
+        # print("preds:", len(preds), len(preds[0]), len(preds[1]))
+        # print("preds shape:", preds.shape)
+        preds = np.argmax(preds, axis=-1)
+        preds = preds.reshape(-1, preds.shape[-1])
+
+        # Create masked predictions array
+        masked_preds = []
+        for pred_seq, label_seq in zip(preds, labels):
+            # Get indices where labels are not -100
+            valid_indices = label_seq != -100
+            # Keep only the tokens at valid positions
+            masked_pred = pred_seq[valid_indices]
+            masked_preds.append(masked_pred)
+
+        # Convert to proper format for batch_decode
+        masked_preds = np.array([np.pad(seq, (0, max(len(p) for p in masked_preds) - len(seq)), 
+                                    'constant', constant_values=tokenizer.pad_token_id) 
+                                for seq in masked_preds])
+        decoded_preds = tokenizer.batch_decode(masked_preds, skip_special_tokens=True)
+
+        # Replace -100 in the labels as we can't decode them
+        # print(f"^^7\n [{decoded_preds[0]}] -> [{labels[0]}]")
+        labels = np.where(labels != -100, labels, tokenizer.pad_token_id) # -100 부분은 pad token으로 교체
+        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+        # Post-process predictions and labels
+        decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
+        # print(f"^^7\n [{decoded_preds[14]}] -> [{decoded_labels[14]}]")
+        # raise Exception("fuck yeah")
+
+        # Extract transcription predictions (text after '>')
+        # transcription_preds = []
+        # for pred in decoded_preds:
+        #     parts = pred.split(">")
+        #     if len(parts) > 1:
+        #         # Take the text after '>', strip whitespace
+        #         transcription = parts[1].strip()
+        #         transcription_preds.append(transcription)
+        #     else:
+        #         # If no '>' found, use empty string or the full text
+        #         transcription_preds.append("")
+
+        # Compute BLEU score
+        bleu_results = bleu_metric.compute(
+            predictions=decoded_preds, references=[[label] for label in decoded_labels]
         )
+        bertscore_results = bertscore.compute(
+            predictions=decoded_preds, references=[[label] for label in decoded_labels], lang="en"
+        )
+
+        wer_score = wer_metric.compute(
+            predictions=decoded_preds, references=decoded_labels
+        )
+
+        # Return all metrics
+        result = {
+            "bleu": bleu_results["score"],
+            "bertscore_f1": (sum(bertscore_results["f1"]) / len(bertscore_results["f1"])) * 100,
+            "wer": wer_score * 100  # Convert to percentage
+        }
+
+        return result
+
+    trainer = Trainer(
+        model=model,
+        tokenizer=tokenizer,
+        args=training_args,
+        train_dataset=train_data if training_args.do_train else None,
+        eval_dataset=val_data if training_args.do_eval else None,
+        data_collator=data_collator,
+        compute_metrics=compute_metrics,
+    )
 
     if training_args.initial_global_step != 0:
         logger.info(f"Set initial global step={training_args.initial_global_step}")
@@ -359,7 +432,6 @@ def train():
         logger.info("*** Evaluate ***")
 
         metrics = trainer.evaluate()
-        print("type of metric: ", type(metrics))
 
         # max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(eval_data)
         max_eval_samples = data_args.max_eval_samples if data_args.max_eval_samples is not None else len(val_data) # added by jaehwan
