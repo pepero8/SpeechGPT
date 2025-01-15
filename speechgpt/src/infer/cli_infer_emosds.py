@@ -33,39 +33,71 @@ logger = logging.getLogger(__name__)
 NAME="EmoSDS"
 # META_INSTRUCTION = ""  # step 1 style prediction
 # META_INSTRUCTION = "You are a human-like dialogue agent EmoSDS that imitates real human-to-human spoken dialogue. The speaking style should be very natural in the dialogue context. Generate human-like response given human speech. " # step 2 dialogue prediction
-META_INSTRUCTION = f"""
-# Task
+# META_INSTRUCTION = f"""
+# # Task
+# From now on, you are an intelligent voice assistant. You need to provide useful, consistent to the dialogue context, emotionally approval natural response to the user's input speech.
+# Given user speech, you need to transcribe the user speech, identify the speaking style, predict appropriate response style, and predict appropriate response text according to the response style.
+# The speaking style should be one of following 11 styles: neutral, angry, cheerful, sad, excited, friendly, terrified, shouting, unfriendly, whispering, hopeful
+
+# # Examples
+# Following examples show example responses to the transcribed input speech with speaking style. The caption in square brackets indicate speaking style of the transcription."
+
+# ## Example 1
+# Input: <excited> I can't believe it's not butter!
+# Answer: <friendly> Oh wow, you're really passionate about this! So, what is it about "I Can't Believe It's Not Butter" that's got you so excited?
+
+# ## Example 2
+# Input: <angry> I can't believe it's not butter!
+# Answer: <neutral> Whoa, okay, let's take a deep breath and try to calm down. Are you actually upset that it's not butter? What's really going on here?
+
+# ## Example 3
+# Input: <neutral> I watched a baseball game on the weekend
+# Answer: <friendly> Oh cool! how was it?
+
+# ## Example 4
+# Input: <sad> I watched a baseball game on the weekend
+# Answer: <neutral> You don't seem too happy, did your team lose?"""  # step 2 dialogue prediction
+
+META_INSTRUCTION = f'''
 From now on, you are an intelligent voice assistant. You need to provide useful, consistent to the dialogue context, emotionally approval natural response to the user's input speech.
-Given user speech, you need to transcribe the user speech, identify the speaking style, predict appropriate response style, and predict appropriate response text according to the response style.
-The speaking style should be one of following 11 styles: neutral, angry, cheerful, sad, excited, friendly, terrified, shouting, unfriendly, whispering, hopeful
+Given user speech and history, you need to transcribe the user speech, identify the speaking style, predict appropriate response style, and predict appropriate response text according to the context.
+The speaking style should be one of following 7 styles: anger, disgust, fear, happiness, neutral, sadness, surprise
 
 # Examples
-Following examples show example responses to the transcribed input speech with speaking style. The caption in square brackets indicate speaking style of the transcription."
+Following examples show example responses to the transcribed input speech with speaking style and history. The caption in angle brackets indicate speaking style of the transcription."
 
 ## Example 1
-Input: [excited] I can't believe it's not butter!
-Answer: [friendly] Oh wow, you're really passionate about this! So, what is it about "I Can't Believe It's Not Butter" that's got you so excited?
+Input: It just tastes so good, you know?
+Answer: That's awesome! It's always great to find something you enjoy. Do you use it on anything specific, like toast or cooking?
+Input: <surprise> I can't believe it's not butter!
+Answer: <happiness> Oh wow, you're really passionate about this! So, what is it about "I Can't Believe It's Not Butter" that's got you so surprised?
 
 ## Example 2
-Input: [angry] I can't believe it's not butter!
-Answer: [neutral] Whoa, okay, let's take a deep breath and try to calm down. Are you actually upset that it's not butter? What's really going on here?
+Input: <anger> I can't believe it's not butter!
+Answer: <neutral> Whoa, okay, let's take a deep breath and try to calm down. Are you actually upset that it's not butter? What's really going on here?
 
 ## Example 3
-Input: [neutral] I watched a baseball game on the weekend
-Answer: [friendly] Oh cool! how was it?
+Input: I watched a baseball game on the weekend
+Answer: Oh cool! how was it?
+Input: <sadness> The game wasn't bad
+Answer: <sadness> You don't seem too happy, did your team lose?
 
 ## Example 4
-Input: [sad] I watched a baseball game on the weekend
-Answer: [neutral] You don't seem too happy, did your team lose?"""  # step 2 dialogue prediction
+Input: I watched a baseball game on the weekend
+Answer: Oh cool! how was it?
+Input: <happiness> The game wasn't bad
+Answer: <happiness> That's great to hear! Did your favorite team win?
+
+Here's the prompt:\n\nAnswer: Let me try. Oh, I missed!\nInput: Throw the ball up high.\nAnswer: High?\nInput: Yes, very high. Over your head. Then you will have time to hit the ball.\nAnswer: Oh! I hit it.\n '''
 
 # USER_INSTRUCTION = "Identify speaking style of given speech: {units}. Provide only the style label > ["
-DEFAULT_GEN_PARAMS = { # following Spoken-LLM
-        "max_new_tokens": 1024,
+DEFAULT_GEN_PARAMS = {
+        "max_new_tokens": 4096,
         "min_new_tokens": 10,
-        "temperature": 0.7,
+        "temperature": 0.05,
         "do_sample": True, 
         "top_k": 60,
-        "top_p": 0.95,
+        "top_p": 0.9,
         }  
 device = torch.device('cuda')
 
@@ -95,7 +127,7 @@ class SpeechGPTInference:
         # self.template = "Identify speaking style of given speech: {units}. Provide only the style label > ["  # step 1 style prediction
         # self.template = "[Human]:Identify speaking style of given speech: {units}. Provide only the style label without any explanation<eoh>.[EmoSDS]:["  # step 1 style prediction
         # self.template = "[Human]:{units}<eoh>.["  # step 2 dialogue prediction
-        self.template = "Input: {units} ["  # step 2 dialogue prediction
+        self.template = "Input: {units} "  # step 2 dialogue prediction
 
         # speech2unit
         self.s2u = Speech2UnitCustom(ckpt_dir=s2u_dir)
