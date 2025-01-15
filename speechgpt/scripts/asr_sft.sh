@@ -33,11 +33,11 @@ torchrun \
     --standalone \
 src/train/asr_sft.py \
     --model_name_or_path "${METAROOT}" \
-    --data_path "${DATAROOT}/asr_data_train_eval.jsonl" \
+    --data_path "${DATAROOT}/asr_data_librispeech_styletalk.jsonl" \
     --val_set_size 29 \
     --cache_dir ${CACHEROOT} \
     --preprocessing_num_workers 10 \
-    --model_max_length 512 \
+    --model_max_length 2048 \
     --bf16 True \
     --do_train \
     --do_eval \
@@ -46,15 +46,16 @@ src/train/asr_sft.py \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 32 \
-    --num_train_epochs 15 \
+    --num_train_epochs 10 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 1000 \
+    --save_steps 100000 \
     --learning_rate 2e-4 \
     --weight_decay 0. \
     --warmup_ratio 0.1 \
     --lr_scheduler_type "cosine" \
     --log_level debug \
+    --overwrite_output_dir \
     --train_embeddings \
     --logging_steps 1 \
     --fsdp "full_shard auto_wrap" \
