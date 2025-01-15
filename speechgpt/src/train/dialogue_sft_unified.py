@@ -185,7 +185,13 @@ def train():
         logger.info(f"Add special unit tokens <0>-<{units_size-1} to tokenizer.vocab")
         new_tokens = [f"<{x}>" for x in range(units_size)] + ['<sosp>','<eosp>']
         tokenizer.add_tokens(new_tokens)
-    for token in ['<sosp>','<eosp>']:
+        logger.info(f"Add style tokens to tokenizer.vocab")
+        # style_tokens = ['<neutral>', '<angry>', '<cheerful>', '<sad>', '<excited>', '<friendly>', '<terrified>', '<shouting>', '<unfriendly>', '<whispering>', '<hopeful>'] # for StyleTalk
+        style_tokens = ['<anger>', '<disgust>', '<fear>', '<happiness>', '<neutral>', '<sadness>', '<surprise>'] # for DailyTalk
+        tokenizer.add_tokens(style_tokens)
+    # for token in ['<sosp>','<eosp>']:
+    # for token in ['<sosp>','<eosp>', '<neutral>', '<angry>', '<cheerful>', '<sad>', '<excited>', '<friendly>', '<terrified>', '<shouting>', '<unfriendly>', '<whispering>', '<hopeful>']: # for StyleTalk
+    for token in ['<anger>', '<disgust>', '<fear>', '<happiness>', '<neutral>', '<sadness>', '<surprise>']: # for DailyTalk
         if token not in tokenizer.get_vocab():
             logger.info(f"Add special unit tokens {token} to tokenizer.vocab")
             tokenizer.add_tokens([token])
@@ -309,22 +315,30 @@ def train():
         return preds, labels
 
     def extract_parts(text: str) -> Tuple[str, str, str, str]:
-        """Extract different parts from the structured text."""
-        # try:
-        # Extract cur_style (part before first ']')
-        cur_style = text.split("]")[0].strip()
+        """Extract different parts from the structured text.
+           input text does not include prefix(-100 parts)
+        """
+        try:
+            # Extract cur_style (part before first ']')
+            cur_style = text.split(">")[0].split("<")[1].strip()
+            # cur_style = text.split("]")[0].strip()
 
-        # Extract cur_text (part between first ']' and 'Answer:')
-        cur_text = text.split("]")[1].split("Answer:")[0].strip()
+            # Extract cur_text (part between first ']' and 'Answer:')
+            cur_text = text.split(">")[1].split("Answer:")[0].strip()
+            # cur_text = text.split("]")[1].split("Answer:")[0].strip()
 
-        # Extract response_style (part between '[' and ']' after 'Answer:')
-        after_answer = text.split("Answer:")[1].strip()
-        response_style = after_answer[
-            after_answer.find("[") + 1 : after_answer.find("]")
-        ].strip()
+            # Extract response_style (part between '[' and ']' after 'Answer:')
+            after_answer = text.split("Answer:")[1].strip()
+            response_style = after_answer[
+                # after_answer.find("[") + 1 : after_answer.find("]")
+                after_answer.find("<") + 1 : after_answer.find(">")
+            ].strip()
+        except:
+            raise Exception(f"text: {text}")
 
         # Extract response_text (remaining part after response_style)
-        response_text = after_answer[after_answer.find("]") + 1 :].strip()
+        response_text = after_answer[after_answer.find(">") + 1 :].strip()
+        # response_text = after_answer[after_answer.find("]") + 1 :].strip()
         if response_text == "":
             raise Exception(f"[{text}]")
 
@@ -341,9 +355,37 @@ def train():
         Returns:
             dict containing metrics
         """
+
+        # >> for StyleTalk
+        # VALID_STYLES = {
+        #     'neutral': 0,
+        #     'angry': 1,
+        #     'cheerful': 2,
+        #     'sad': 3,
+        #     'excited': 4, 
+        #     'friendly': 5,
+        #     'terrified': 6,
+        #     'shouting': 7,
+        #     'unfriendly': 8, 
+        #     'whispering': 9,
+        #     'hopeful': 10
+        # }
+
+        # >> for DailyTalk
+        VALID_STYLES = {
+            'anger': 0,
+            'disgust': 1,
+            'fear': 2,
+            'happiness': 3,
+            'neutral': 4,
+            'sadness': 5,
+            'surprise': 6
+        }
+
         bleu_metric = evaluate.load("sacrebleu")
         bertscore = evaluate.load("bertscore")
         wer_metric = evaluate.load("wer")
+        acc_metric = evaluate.load("accuracy")
 
         preds, labels = eval_preds
         # print(f"^^7 fuck yeah {labels[21]}")
@@ -360,8 +402,9 @@ def train():
         # Create masked predictions array
         masked_preds = []
         for pred_seq, label_seq in zip(preds, labels):
+            temp_label = np.roll(label_seq, -1) # 이거 안해주면 style 토큰이 제대로 추출되지 않음
             # Get indices where labels are not -100
-            valid_indices = label_seq != -100
+            valid_indices = temp_label != -100
             # Keep only the tokens at valid positions
             masked_pred = pred_seq[valid_indices]
             masked_preds.append(masked_pred)
@@ -397,11 +440,39 @@ def train():
             [],
             [],
         )
+
+        # Style validation counters
+        valid_cur_style_count = 0
+        valid_response_style_count = 0
+        total_count = 0
+
         for pred in decoded_preds:
             cur_style, cur_text, response_style, response_text = extract_parts(pred)
-            cur_styles_preds.append(cur_style)
+
+            # Convert to lowercase for matching
+            cur_style = cur_style.lower()
+            response_style = response_style.lower()
+
+            # Map to indices and validate
+            cur_style_idx = VALID_STYLES.get(cur_style, -1)
+            response_style_idx = VALID_STYLES.get(response_style, -1)
+
+            if cur_style_idx != -1:
+                valid_cur_style_count += 1
+            if response_style_idx != -1:
+                valid_response_style_count += 1
+            total_count += 1
+
+            # Validate styles
+            # if cur_style.lower() in VALID_STYLES:
+            #     valid_cur_style_count += 1
+            # if response_style.lower() in VALID_STYLES:
+            #     valid_response_style_count += 1
+            # total_count += 1
+
+            cur_styles_preds.append(cur_style_idx)
             cur_texts_preds.append(cur_text)
-            response_styles_preds.append(response_style)
+            response_styles_preds.append(response_style_idx)
             response_texts_preds.append(response_text)
 
         # Extract parts from labels
@@ -416,13 +487,27 @@ def train():
             [],
             [],
         )
+
         # for label in decoded_labels:
         for i, label in enumerate(decoded_labels):
             cur_style, cur_text, response_style, response_text = extract_parts(label)
-            cur_styles_labels.append(cur_style)
+
+            # Convert to lowercase for matching
+            cur_style = cur_style.lower()
+            response_style = response_style.lower()
+
+            # Map to indices
+            cur_style_idx = VALID_STYLES.get(cur_style, -1)
+            response_style_idx = VALID_STYLES.get(response_style, -1)
+
+            cur_styles_labels.append(cur_style_idx)
             cur_texts_labels.append(cur_text)
-            response_styles_labels.append(response_style)
+            response_styles_labels.append(response_style_idx)
             response_texts_labels.append(response_text)
+
+        # Calculate style validation percentages
+        cur_style_valid_percentage = (valid_cur_style_count / total_count) * 100
+        response_style_valid_percentage = (valid_response_style_count / total_count) * 100
 
         print(f"^^7 pred: [{decoded_preds[21]}]")
         print(f"^^7\n   [{cur_styles_preds[21]}] -> [{cur_styles_labels[21]}]\n \
@@ -432,16 +517,27 @@ def train():
         # raise Exception("fuck yeah")
 
         # Compute BLEU score for current style
-        bleu_results_cur_style = bleu_metric.compute(
-            predictions=cur_styles_preds, references=[[label] for label in cur_styles_labels]
+        acc_results_cur_style = acc_metric.compute(
+            predictions=cur_styles_preds,
+            references=cur_styles_labels
+            # references=[[label] for label in cur_styles_labels]
         )
+        # bleu_results_cur_style = bleu_metric.compute(
+        #     predictions=cur_styles_preds, references=[[label] for label in cur_styles_labels]
+        # )
 
         # Compute BLEU score for reponse style
-        bleu_results_response_style = bleu_metric.compute(
+        acc_results_response_style = acc_metric.compute(
             predictions=response_styles_preds,
-            references=[[label] for label in response_styles_labels],
+            references=response_styles_labels
+            # references=[[label] for label in response_styles_labels],
             # references=[response_styles_labels[21]],
         )
+        # bleu_results_response_style = bleu_metric.compute(
+        #     predictions=response_styles_preds,
+        #     references=[[label] for label in response_styles_labels],
+        #     # references=[response_styles_labels[21]],
+        # )
 
         # Compute BLEU score for current text
         bleu_results_cur_text = bleu_metric.compute(
@@ -474,16 +570,17 @@ def train():
 
         # Return all metrics
         result = {
-            "bleu_cur_style": bleu_results_cur_style["score"],
-            "bleu_res_style": bleu_results_response_style["score"],
+            "acc_cur_style": acc_results_cur_style["accuracy"] * 100,
+            "acc_res_style": acc_results_response_style["accuracy"] * 100,
             "bleu_cur_text": bleu_results_cur_text["score"],
             "bleu_res_text": bleu_results_response_text["score"],
-            "wer_cur_text": wer_cur_text,
-            "wer_res_text": wer_response_text,
+            "wer_cur_text": wer_cur_text * 100,
+            "wer_res_text": wer_response_text * 100,
             "bertscore_f1": (
                 sum(bertscore_results["f1"]) / len(bertscore_results["f1"])
-            )
-            * 100,
+            ) * 100,
+            "valid_cur_style_percentage": cur_style_valid_percentage,
+            "valid_response_style_percentage": response_style_valid_percentage
         }
 
         return result
