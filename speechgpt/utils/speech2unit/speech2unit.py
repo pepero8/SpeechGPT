@@ -262,14 +262,32 @@ class Speech2UnitCustom(torch.nn.Module):
         self.wavlm = self.wavlm.to(device)
         self.wavlm.eval()
 
+        # Load audio using torchaudio (supports both WAV and FLAC)
+        waveform, sample_rate = torchaudio.load(audio_path)
+
+        # Convert to mono if stereo
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        # Resample to 16kHz if needed
+        target_sample_rate = 16000
+        if sample_rate != target_sample_rate:
+            waveform = torchaudio.functional.resample(
+                waveform, orig_freq=sample_rate, new_freq=target_sample_rate
+            )
+
+        # Convert to numpy array and flatten
+        audio_input = waveform.squeeze().numpy()
+
         # Load and preprocess audio
-        audio_input, sampling_rate = sf.read(audio_path)
-        if len(audio_input.shape) > 1:
-            audio_input = audio_input.mean(axis=1)
+        # audio_input, sampling_rate = sf.read(audio_path)
+        # if len(audio_input.shape) > 1:
+        #     audio_input = audio_input.mean(axis=1)
 
         inputs = self.processor(
             audio_input,
-            sampling_rate=sampling_rate,
+            # sampling_rate=sampling_rate,
+            sampling_rate=target_sample_rate,
             return_tensors="pt",
             padding=True
         )
@@ -292,13 +310,13 @@ class Speech2UnitCustom(torch.nn.Module):
     # def discretize_speech(self, audio_path, merged=True):
     #     """
     #     Discretize speech using WavLM embeddings and KMeans clustering
-        
+
     #     Args:
     #         audio_path (str): Path to audio file
     #         processor: WavLM processor
     #         wavlm: WavLM model
     #         kmeans: Trained KMeans model
-            
+
     #     Returns:
     #         numpy.ndarray: Discretized speech tokens (cluster assignments)
     #     """
